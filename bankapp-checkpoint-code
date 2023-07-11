@@ -1,0 +1,403 @@
+STEP 1 :
+
+
+import configparser
+import logging
+import os
+import smtplib
+import sqlite3
+from datetime import datetime
+
+
+STEP 2 :
+
+class BaseConfig:
+    """
+    All common things for configurations are:
+        - database
+        - logging
+    """
+    def __init__(self):
+        self.config = self.load_config()
+        self.logger = self.logging_config()
+        
+    def load_config(self):
+        config = configparser.ConfigParser()
+        config.read('bank.ini')
+        return config
+        
+    def logging_config(self):
+        """
+        Create log file.
+        """
+        logging.basicConfig(filename='bankapp.log', filemode='a', level=logging.INFO)
+        log = logging.getLogger()
+        return log
+    
+    def is_file_present(self, filename):
+        return os.path.exists(filename)
+    
+    def setup_db_conn(self):
+        try:
+            conn = sqlite3.connect(self.config['sqlite']['name'])
+            db_filename = self.config['sqlite']['name']
+            if self.is_file_present(db_filename):
+                self.logger.info("CONN OBJECT CREATED")
+                conn.execute('create table IF NOT EXISTS customer(account_no int, name text, email text, amount INTEGER, account_type text, account_pin text)')
+                conn.execute('create table IF NOT EXISTS employee(account_no int, name text, email text, amount INTEGER, account_type text, account_pin text)')
+            else:
+                self.logger.error("DB FILE NOT FOUND")
+                assert False, "DB FILE NOT FOUND"
+        except Exception as e:
+            self.logger.error("ERROR OCCURED - {}".format(e))
+            print("ERROR OCCURED - {}".format(e))
+            assert False, "ERROR OCCURED - {}".format(e)
+        else:            
+            return conn
+
+
+
+STEP 3 :
+
+
+class Bank(BaseConfig):
+    BANK_NAME = 'SBI'
+    def __init__(self):
+        super().__init__()
+        self.conn = self.setup_db_conn()
+        
+    def _generate_account_no(self):
+        """
+        Generate account number and return it.
+        """
+        return self.BANK_NAME+datetime.now().strftime('%d%Y%M%S')
+    
+    def _auth(self, account_no, account_pin):
+        """
+        Validate the user
+        """
+        try:
+            result = self.conn.execute("select * from customer where account_no='{}' and account_pin='{}'".format(account_no, account_pin))
+            if len(result.fetchall()) == 0:
+                self.logger.error("NO RECORD FOUND")
+                assert False, "NO RECORD FOUND"
+        except Exception as e:
+            self.logger.error("ERROR OCCURED - {}".format(e))
+            print("ERROR OCCURED - {}".format(e))
+            assert False, "ERROR OCCURED - {}".format(e)
+        else:
+            print("Account number is ", account_no)
+            self.logger.info("Account number is {}".format(account_no))
+    
+    def check_balance(self, username, account_pin):
+        """
+        Validate user and password and print total avaliable balance in bank.
+        """
+        pass
+    
+    def create_account(self):
+        """
+        Override this method inside a child class Customer.
+        """
+        pass
+    
+    def is_account_valid(self, account_type):
+        self.logger.info("ACCOUNT TYPE - {}".format(account_type))
+        print("############ ACCOUNT TYPE IS ", account_type.lower())
+        assert account_type.lower() in ['saving', 'current'], "Account Type Is Not Valid"
+        
+    def print_all_customers_data(self):
+        print(self.conn.execute("select  * from customer").fetchall())
+        self.logger.info("ALL CUSTOMER DATA - {}".format(self.conn.execute("select  * from customer").fetchall()))
+        
+    def print_all_employee_data(self):
+        print(self.conn.execute("select  * from employee").fetchall())
+        self.logger.info("ALL EMPLOYEE DATA - {}".format(self.conn.execute("select  * from employee").fetchall()))
+
+
+
+STEP 4 :
+
+
+
+class Customer(Bank):
+    def __init__(self):
+        super().__init__()
+        
+    def create_account(self, name, email, amount, account_type, account_pin):
+        """
+        create_account:
+            Returns
+                - Account Number
+        """
+        self.is_account_valid(account_type)
+        account_no = self._generate_account_no()
+        try:
+            self.conn.execute("insert into customer values('{}','{}','{}',{},'{}',{})".format(account_no, name, email, amount, account_type, account_pin))
+        except Exception as e:
+            self.logger.error("ERROR OCCURED - {}".format(e))
+            print("ERROR OCCURED - {}".format(e))
+            assert False, "ERROR OCCURED - {}".format(e)
+        else:
+            self.conn.commit()
+            print("Account number is {}".format(account_no))
+            self.logger.info("Account number is {}".format(account_no))
+    
+    def _check_balance(self, account_no, account_pin):
+        """
+        Check balance based on account_no and password.
+        If one of the value is flase return not valid user.
+        """
+        self._auth(account_no, account_pin)
+        result = self.conn.execute("select amount from customer where account_no='{}'".format(account_no))
+        amt = result.fetchall()[0][0]
+        self.logger.info("Before deposit your ammount is {}".format(amt))
+        print("Ammount in your account is ", amt)
+    
+    def deposit(self, account_no, account_pin, amount):
+        """
+        Deposit amount based on account no
+        """
+        self._auth(account_no, account_pin)
+        if amount > 0:
+            result = self.conn.execute("select amount from customer where account_no='{}' ".format(account_no))
+            amt = result.fetchall()[0][0]
+            self.logger.info("Before deposit your ammount is '{}'".format(amt))
+            print("Before deposit your ammount is ", amt)
+            amount = amt+amount
+            self.conn.execute("update customer set amount= '{}' where account_no='{}' ".format(amount, account_no))
+            self.conn.commit()
+            result = self.conn.execute("select amount from customer where account_no={} ")
+            amt = result.fetchall()[0][0]
+            self.logger.info("After deposit your ammount is '{}'".format(amt))
+            print("After deposit your ammount is ", amt)
+        else:
+            self.logger.warning("Amount is not valid")
+            print("Amount is not valid")
+    
+    def _withdraw(self, account_no, account_pin, amount):
+        """
+        withdraw amount based on account no
+        """
+        self._auth(account_no, account_pin)
+        if amount > 0:
+            result = self.conn.execute("select amount from customer where account_no='{}' ".format(account_no))
+            amt = result.fetchall()[0][0]
+            self.logger.info("Before withdraw your ammount is '{}'".format(amt))
+            print("Before withdraw your ammount is ", amt)
+            if amt < 500:
+                print("Amount is less than 500 you cannot withdraw")
+                assert False, 'Amount is less'
+            amount = amt-amount
+            self.conn.execute("update customer set amount= '{}' where account_no='{}' ".format(amount, account_no))
+            self.conn.commit()
+            result = self.conn.execute("select amount from customer where account_no='{}'".format(account_no))
+            amt = result.fetchall()[0][0]
+            self.logger.info("After withdraw your ammount is '{}'".format(amt))
+            print("After withdraw your ammount is ", amt)
+        else:
+            self.logger.warning("Amount is not valid")
+            print("Amount is not valid")
+
+
+
+
+
+STEP 5 :
+
+
+
+class Employee(Bank):
+    def __init__(self):
+        super().__init__()
+        
+    def create_account(self, name, email, amount, account_type, account_pin):
+        """
+        create_account:
+            Returns
+                - Account Number
+        """
+        self.is_account_valid(account_type)
+        account_no = self._generate_account_no()
+        try:
+            self.conn.execute("insert into employee values('{}','{}','{}',{},'{}',{})".format(account_no, name, email, amount, account_type, account_pin))
+            self.logger.info("Data loaded!!!")
+        except Exception as e:
+            self.logger.error("ERROR OCCURED - {}".format(e))
+            print("ERROR OCCURED - {}".format(e))
+            assert False, "ERROR OCCURED - {}".format(e)
+        else:
+            self.logger.info("Account number is {}".format(account_no))
+            print("Account number is ", account_no)            
+    
+    def _check_balance(self, account_no, account_pin):
+        """
+        Check balance based on account_no and password.
+        If one of the value is flase return not valid user.
+        """
+        self._auth(account_no, account_pin)
+    
+    def deposit(self, account_no, account_pin, amount):
+        """
+        Deposit amount based on account no
+        """
+        self._auth(account_no, account_pin)
+        if amount > 0:
+            result = self.conn.execute("select amount from employee where account_no='{}' ".format(account_no))
+            amt = result.fetchall()[0][0]
+            self.logger.info("Before deposit your ammount is {}".format(amt))
+            print("Before deposit your ammount is ", amt)
+            amount = amt+amount
+            self.conn.execute("update employee set amount= '{}' where account_no= '{}' ".format(amount, account_no))
+            self.conn.commit()
+            result = self.conn.execute("select amount from employee where account_no='{}' ".format(account_no))
+            amt = result.fetchall()[0][0]
+            self.logger.info("After deposit your ammount is {}".format(amt))
+            print("After deposit your ammount is ", amt)
+        else:
+            self.logger.warning("Amount is not valid")
+            print("Amount is not valid")
+    
+    def _withdraw(self, account_no, account_pin, amount):
+        """
+        withdraw amount based on account no
+        """
+        self._auth(account_no, account_pin)
+        if amount > 0:
+            result = self.conn.execute("select amount from employee where account_no='{}' ".format(format(account_no)))
+            amt = result.fetchall()[0][0]
+            self.logger.info("Before withdraw your ammount is '{}'".format(amt))
+            print("Before withdraw your ammount is ", amt)
+            if amt < 500:
+                print("Amount is less than 500 you cannot withdraw")
+                assert False, 'Amount is less'
+            amount = amt+amount
+            self.conn.execute("update employee set amount= '{}' where account_no='{}' ".format(amount, account_no))
+            self.conn.commit()
+            result = self.conn.execute("select amount from employee where account_no='{}'".format(account_no))
+            amt = result.fetchall()[0][0]
+            self.logger.info("After withdraw your ammount is '{}'".format(amt))
+            print("After withdraw your ammount is ", amt)
+        else:
+            self.logger.warning("Amount is not valid")
+            print("Amount is not valid")
+            
+    
+def main():
+    cust = Customer()
+    emp = Employee()
+    bnk = Bank()
+    while True:
+        print("########### WELCOME TO SBI BANK ###########")
+        print("Are you Customer ? Employee")
+        usr_input = input("Type Customer C or Type Employee E: ")
+        if usr_input == "c" or usr_input == "C":
+            while True:
+                print("Select one of the option to continue")
+                print("1. Create account\t\t2. Check Balance\t\t")
+                print("3. Deposit Amount\t\t4. Withdraw Amount")
+                print("5. Close Account\t\t6. Exit")
+                usr_choise = int(input("Enter your choise: "))
+                if usr_choise == 1:
+                    print("Make sure that you should not be already member of SBI Bank")
+                    name = input("Enter your name: ")
+                    email = input("Enter your email id: ")
+                    balance = input("Enter your opening balance: ")
+                    account_type = input("Enter your account type: ")
+                    account_pin = input("Enter your pin")
+                    cust.create_account(name, email, balance, account_type, account_pin)
+                    print("############### Account created ###############")
+
+                elif usr_choise == 2:
+                    account_no = input("Enter your account: ")
+                    account_pin = input("Enter your pin")
+                    cust._check_balance(account_no, account_pin)
+
+                elif usr_choise == 3:
+                    account_no = input("Enter your account: ")
+                    account_pin = input("Enter your pin")
+                    amount = int(input("Enter a amount: "))
+                    if amount > 0:
+                        cust.deposit(account_no, account_pin, amount)
+                    else:
+                        print("Amount is not valid")
+
+                elif usr_choise == 4:
+                    account_no = input("Enter your account: ")
+                    account_pin = input("Enter your pin")
+                    amount = int(input("Enter a amount: "))
+                    if amount > 0:
+                        cust._withdraw(account_no, account_pin, amount)
+                    else:
+                        print("Amount is not valid")
+
+                elif usr_choise == 5:
+                    account_no = input("Enter your account: ")
+                    account_pin = input("Enter your pin")
+                    print("Thanks for using SBI Bank!")
+                elif usr_choise == 6:
+                    break
+                else:
+                    print("Enter a valid input")
+        elif usr_input == "e" or usr_input == "E":
+            while True:
+                print("Select one of the option to continue")
+                print("1. Create account\t\t2. Check Balance\t\t")
+                print("3. Deposit Amount\t\t4. Withdraw Amount")
+                print("5. Close Account")
+                usr_choise = int(input("Enter your choise: "))
+                if usr_choise == 1:
+                    print("Welcome to SBI Employee Portal")
+                    name = input("Enter your name: ")
+                    email = input("Enter your email id: ")
+                    balance = input("Enter your opening balance: ")
+                    account_type = input("Enter your account type: ")
+                    account_pin = input("Enter your pin")
+                    emp.create_account(name, email, balance, account_type, account_pin)
+                    print("Congratulations now your are employee of SBI Bank")
+                    self.logger.info("Congratulations now your are employee of SBI Bank")
+                elif usr_choise == 2:
+                    account_no = input("Enter your account: ")
+                    account_pin = input("Enter your pin")
+                    emp._check_balance(account_no, account_pin)
+                elif usr_choise == 3:
+                    account_no = input("Enter your account: ")
+                    account_pin = input("Enter your pin")
+                    amount = int(input("Enter a amount: "))
+                    if amount > 0:
+                        emp.deposit(account_no, account_pin, amount)
+                    else:
+                        print("Amount is not valid")
+                elif usr_choise == 4:
+                    account_no = input("Enter your account: ")
+                    account_pin = input("Enter your pin")
+                    amount = int(input("Enter a amount: "))
+                    if amount > 0:
+                        cust._withdraw(account_no, account_pin, amount)
+                    else:
+                        print("Amount is not valid")
+                elif usr_choise == 5:
+                    pass
+                elif usr_choise == 6:
+                    break
+                else:
+                    print("Enter a valid input")
+        elif usr_input == "b" or usr_input == "B":
+            while True:
+                print("Select one of the option to continue")
+                print("1. Show All Customer Details\t\t2. Show All Employee Details\t\t")
+                print("3. Exit")
+                usr_choise = int(input("Enter your choise: "))
+                if usr_choise == 1:
+                    bnk.print_all_customers_data()
+                elif usr_choise == 2:
+                    bnk.print_all_employee_data()
+                elif usr_choise == 3:
+                    break
+                else:
+                    print("Enter a valid input")
+        else:
+            print("Not a valid input")
+            break
+if __name__ == '__main__':
+    main()
